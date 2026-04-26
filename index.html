@@ -11,20 +11,18 @@
 
 <script>
 // ═══════════════════════════════════════════════════════════════════
-//  FIREBASE CONFIG
-//  Fill this in once (see setup screen below), then push index.html
-//  to GitHub. After that, everyone who opens the URL is live.
+//  FIREBASE CONFIG — credentials pre-configured for AIML Data Hub
 // ═══════════════════════════════════════════════════════════════════
 var FIREBASE_CONFIG = {
-  apiKey:            "YOUR_API_KEY",
-  authDomain:        "YOUR_PROJECT_ID.firebaseapp.com",
-  databaseURL:       "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
-  projectId:         "YOUR_PROJECT_ID",
-  storageBucket:     "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId:             "YOUR_APP_ID"
+  apiKey:            "AIzaSyDlcx6NbgvNGfonlhEogikghclUi097A80",
+  authDomain:        "aiml-b2780.firebaseapp.com",
+  databaseURL:       "https://aiml-b2780-default-rtdb.firebaseio.com",
+  projectId:         "aiml-b2780",
+  storageBucket:     "aiml-b2780.firebasestorage.app",
+  messagingSenderId: "28023902826",
+  appId:             "1:28023902826:web:affef2c5c8f9146b92b013"
 };
-var IS_CONFIGURED = (FIREBASE_CONFIG.apiKey !== 'YOUR_API_KEY');
+var IS_CONFIGURED = true;
 
 // Auto-redirect local file opens to the GitHub Pages URL
 if (window.location.protocol === 'file:') {
@@ -281,10 +279,11 @@ body::before {
   ...
 }'></textarea>
         <p class="setup-err" id="config-err">⚠️ Could not read that config — paste the full <code>{...}</code> object from Firebase and make sure it includes apiKey and databaseURL</p>
-        <button class="setup-btn green" onclick="applyConfig()">✅ Generate &amp; Download Configured App</button>
+        <button class="setup-btn green" onclick="applyConfig()">⬇️ Download Configured index.html</button>
         <p style="font-size:.75rem;color:var(--muted);margin-top:10px;">
-          This downloads <strong>index.html</strong> with your Firebase config baked in.
-          Push that file to your GitHub repo root → GitHub Pages redeploys in ~60 s → everyone who opens the URL is live.
+          This downloads <strong>index.html</strong> with your Firebase credentials baked in.
+          Push that file to the <strong>root of your GitHub repo</strong> as <code>index.html</code> →
+          GitHub Pages redeploys in ~60 s → everyone who opens the URL is live automatically.
         </p>
       </div>
     </div>
@@ -446,33 +445,57 @@ function applyConfig() {
   var raw = document.getElementById('config-input').value.trim();
   var err = document.getElementById('config-err');
   err.style.display = 'none';
+
+  if (!raw) { err.style.display = 'block'; return; }
+
+  // ── Step 1: extract the { ... } block from whatever was pasted ──────────
+  // Firebase gives you: const firebaseConfig = { ... };
+  // We just grab everything between the first { and the last }
+  var match = raw.match(/\{[\s\S]+\}/);
+  if (!match) { err.style.display = 'block'; return; }
+
+  // ── Step 2: evaluate the JS object literal with new Function() ──────────
+  // WHY: The old regex approach broke on values like
+  //   appId: "1:28023902826:web:affef2c5c8f9146b92b013"
+  // because it saw "web:" inside a string and treated it as a key.
+  // new Function('return (...)') evaluates the literal as real JavaScript,
+  // which handles every edge case correctly.
   var cfg = null;
   try {
-    // Remove "const/var firebaseConfig =" prefix if present
-    var cleaned = raw.replace(/^[\w\s]+=\s*/, '').replace(/;?\s*$/, '');
-    // Convert JS object literal to JSON (quote unquoted keys)
-    var jsonStr = cleaned.replace(/(['"])?([a-zA-Z_][a-zA-Z0-9_]*)(['"])?:/g, '"$2":').replace(/'/g, '"');
-    cfg = JSON.parse(jsonStr);
-  } catch(e) { /* try plain JSON */ try { cfg = JSON.parse(raw); } catch(e2) {} }
-  if (!cfg || !cfg.apiKey || !cfg.databaseURL || cfg.apiKey === 'YOUR_API_KEY') { err.style.display = 'block'; return; }
+    cfg = (new Function('return (' + match[0] + ')'))();
+  } catch(e) {
+    try { cfg = JSON.parse(match[0]); } catch(e2) { /* both failed */ }
+  }
 
-  // Fetch original HTML source, replace config, download
+  if (!cfg || !cfg.apiKey || !cfg.databaseURL || cfg.apiKey === 'YOUR_API_KEY') {
+    err.style.display = 'block';
+    return;
+  }
+
+  // ── Step 3: build the configured HTML and trigger download ───────────────
+  var newBlock  = 'var FIREBASE_CONFIG = ' + JSON.stringify(cfg, null, 2) + ';';
+  var cfgRegex  = /var FIREBASE_CONFIG = \{[\s\S]*?\};/;
+
+  function doDownload(sourceHTML) {
+    var configured = sourceHTML.replace(cfgRegex, newBlock);
+    if (configured === sourceHTML) {
+      toast('⚠️ Could not find the config placeholder. Make sure the latest index.html is on GitHub.');
+      return;
+    }
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([configured], { type: 'text/html' }));
+    a.download = 'index.html';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    toast('✅ index.html downloaded! Push it to GitHub as index.html → live in ~60 s');
+  }
+
+  // Try fetching clean source first; if that fails, use the current DOM
   fetch(window.location.href)
-    .then(function(r){ return r.text(); })
-    .then(function(html){
-      var replaced = html.replace(
-        /var FIREBASE_CONFIG = \{[\s\S]*?\};/,
-        'var FIREBASE_CONFIG = ' + JSON.stringify(cfg, null, 2) + ';'
-      );
-      var a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([replaced], {type:'text/html'}));
-      a.download = 'index.html';
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      toast('✅ index.html downloaded — push it to GitHub and you\'re live!');
-    })
-    .catch(function(){
-      // Fallback: manual replacement instruction
-      toast('⚠️ Could not auto-fetch — open index.html and replace FIREBASE_CONFIG manually');
+    .then(function(r) { return r.text(); })
+    .then(function(html) { doDownload(html); })
+    .catch(function() {
+      // Fallback: always works even if fetch is blocked
+      doDownload('<!DOCTYPE html>' + document.documentElement.outerHTML);
     });
 }
 
